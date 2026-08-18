@@ -1,4 +1,3 @@
-# Alert
 import requests, os, asyncio, time
 
 HELIUS_KEY = os.getenv("HELIUS_KEY")
