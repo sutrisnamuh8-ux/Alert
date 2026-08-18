@@ -1,117 +1,115 @@
-import asyncio
-import websockets
-import json
-import time
-import os
-import aiohttp
+import asyncio, websockets, json, time, os, aiohttp
 
-# --- CONFIG ---
 HELIUS_KEY = os.getenv("HELIUS_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-PUMPFUN_WS = "wss://pumpportal.fun/api/data"
+PUMP_WS = "wss://pumpportal.fun/api/data"
 
+# === SETTING FILTER LU DISINI ===
+MIN_SOL = 8
+MIN_HOLDERS = 20
 MAX_TRACK = 2
-RPC_DELAY = 0.7 # detik, biar aman dari 429
+RPC_DELAY = 0.8
 
-tracked = {} # mint -> start_time
-queue = []
+tracked = {}
 last_rpc = 0
 
-async def send_tg(msg):
+async def send_tg(text):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         async with aiohttp.ClientSession() as s:
-            await s.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
+            await s.post(url, json={"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown", "disable_web_page_preview": True})
     except Exception as e:
-        print(f"TG Error: {e}")
+        print(f"TG err {e}")
 
-async def safe_rpc(coro_func):
+async def safe_get(url):
     global last_rpc
     now = time.time()
-    diff = now - last_rpc
-    if diff < RPC_DELAY:
-        await asyncio.sleep(RPC_DELAY - diff)
+    if now - last_rpc < RPC_DELAY:
+        await asyncio.sleep(RPC_DELAY - (now - last_rpc))
     last_rpc = time.time()
     try:
-        return await coro_func()
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, timeout=10) as r:
+                if r.status == 429:
+                    print("⚠️ 429 sleep 5s")
+                    await asyncio.sleep(5)
+                    return None
+                return await r.json()
     except Exception as e:
-        if "429" in str(e):
-            print("⚠️ 429! Sleep 6s")
-            await asyncio.sleep(6)
-        else:
-            print(f"RPC err: {e}")
+        print(f"GET err {e}")
         return None
 
 async def check_mint(mint):
     start = tracked[mint]
-    await asyncio.sleep(90) # tunggu menit ke-1.5
+    await asyncio.sleep(100) # tunggu sampe detik 100
 
-    # cek di menit ke-2 (90-150 detik)
-    for i in range(6): # cek 6x selama 60 detik
+    for _ in range(7): # cek dari detik 100 - 170 (menit ke-2)
         elapsed = time.time() - start
-        if elapsed < 90 or elapsed > 160:
+        if elapsed > 175:
+            break
+
+        # Ambil data dari pump.fun
+        data = await safe_get(f"https://frontend-api.pump.fun/coins/{mint}")
+        if not data:
             await asyncio.sleep(10)
             continue
 
-        async def get_vol():
-            async with aiohttp.ClientSession() as s:
-                # Panggil helius get transaction - ganti sesuai function lu
-                url = f"https://api.helius.xyz/v0/token-metadata?api-key={HELIUS_KEY}"
-                # Simplifikasi: lu pake logic cek buys lu disini
-                # Contoh ambil data pump
-                pump_url = f"https://frontend-api.pump.fun/coins/{mint}"
-                async with s.get(pump_url) as r:
-                    data = await r.json()
-                    return data
-
-        data = await safe_rpc(get_vol)
-        if not data:
-            continue
-
-        # LOGIC ALERT LU TARO DISINI
-        # Contoh: kalo volume > 15 SOL
         try:
-            # sesuaikan field nya
-            print(f"Checking {mint[:8]} | {int(time.time()-start)}s")
-            # if data['total_sol'] > 15: dst
-        except:
-            pass
+            # data pump kadang beda field, kita coba ambil
+            # Estimasi SOL di menit ke-2 kita pakai total market cap / logic sederhana
+            # Untuk akurat, pakai trade history, tapi ini versi stabil anti 429
+
+            # Simulasi ambil buys - ganti sesuai logic asli lu kalo punya
+            # Di sini kita pakai virtual sol reserves untuk estimasi
+            holders = data.get("holder_count", 0) or data.get("num_holders", 0) or 0
+
+            # Hitung SOL: pakai usd market cap / harga sol ~160
+            mcap = data.get("usd_market_cap", 0)
+            sol_vol = mcap / 160 if mcap else 0
+
+            print(f"Check {mint[:6]} | {int(elapsed)}s | ~{sol_vol:.1f} SOL | {holders} holders")
+
+            # === FILTER UTAMA ===
+            if sol_vol >= MIN_SOL and holders >= MIN_HOLDERS:
+                msg = f"🚀 *PUMP ALERT*\n\nMint: `{mint}`\nSOL: ~{sol_vol:.1f} (min {MIN_SOL})\nHolders: {holders} (min {MIN_HOLDERS})\nUmur: {int(elapsed)}s\n\nhttps://pump.fun/{mint}\nhttps://photon.so/{mint}"
+                await send_tg(msg)
+                print(f"🔥 ALERT SENT {mint[:6]}")
+                break
+
+        except Exception as e:
+            print(f"Check err {e}")
+
         await asyncio.sleep(10)
 
-    # selesai
     if mint in tracked:
         del tracked[mint]
-        print(f"✅ Done {mint[:6]} | Free slot {len(tracked)}/{MAX_TRACK}")
+        print(f"Done {mint[:6]} | Slot {len(tracked)}/{MAX_TRACK}")
 
 async def main():
-    await send_tg("✅ *PUMP ALERT ON - FIX 429*\nMax track: 2 token\nMode: Anti 429")
-    print("Bot started FIX 429")
+    await send_tg(f"✅ *BOT ON - SETTING BARU*\nMin: {MIN_SOL} SOL | {MIN_HOLDERS} Holders\nMax Track: {MAX_TRACK} | Anti 429")
+    print(f"BOT STARTED {MIN_SOL} SOL / {MIN_HOLDERS} Holders")
     while True:
         try:
-            async with websockets.connect(PUMPFUN_WS) as ws:
+            async with websockets.connect(PUMP_WS) as ws:
                 await ws.send(json.dumps({"method": "subscribeNewToken"}))
                 print("WS Connected")
-                async for msg in ws:
+                async for raw in ws:
                     try:
-                        data = json.loads(msg)
-                        mint = data.get("mint")
-                        if not mint:
+                        j = json.loads(raw)
+                        mint = j.get("mint")
+                        if not mint or mint in tracked:
                             continue
-
                         if len(tracked) >= MAX_TRACK:
-                            print(f"Skip {mint[:6]}... full {len(tracked)}/{MAX_TRACK}")
+                            print(f"Skip {mint[:6]} full {len(tracked)}/{MAX_TRACK}")
                             continue
-
-                        if mint not in tracked:
-                            tracked[mint] = time.time()
-                            print(f"New mint tracked: {mint} | {len(tracked)}/{MAX_TRACK}")
-                            asyncio.create_task(check_mint(mint))
-
-                    except Exception as e:
-                        print(f"WS loop err: {e}")
+                        tracked[mint] = time.time()
+                        print(f"New mint tracked: {mint} | {len(tracked)}/{MAX_TRACK}")
+                        asyncio.create_task(check_mint(mint))
+                    except:
+                        continue
         except Exception as e:
-            print(f"WS disconnected {e}, reconnect 3s")
+            print(f"WS DC {e} retry 3s")
             await asyncio.sleep(3)
 
 if __name__ == "__main__":
