@@ -1,113 +1,47 @@
-import requests, os, asyncio, time
+import asyncio
+import time
+from collections import deque
 
-HELIUS_KEY = os.getenv("HELIUS_KEY")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+# SETTING - BIAR GAK 429
+MAX_TRACK = 2 # cuma track 2 token max barengan
+tracked_tokens = {}
+token_queue = deque()
+last_rpc_call = 0
+RPC_DELAY = 0.6 # jeda 0.6 detik tiap nanya Helius (free limit aman)
 
-if not HELIUS_KEY or not BOT_TOKEN or not CHAT_ID:
-    print("ERROR: Variables belum lengkap!")
-    exit(1)
-
-RPC = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_KEY}"
-
-PUMPFUN = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
-PUMPSWAP = "pAMMBay6oceH9fJKBRHGPt5bBfckbFvoQ7KWn88i9j"
-
-tracked = {}
-seen = set()
-
-def send_tg(text):
+async def safe_helius_call(func):
+    global last_rpc_call
+    now = time.time()
+    wait = RPC_DELAY - (now - last_rpc_call)
+    if wait > 0:
+        await asyncio.sleep(wait)
+    last_rpc_call = time.time()
     try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        r = requests.post(url, json={"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown", "disable_web_page_preview": True}, timeout=10)
-        print(f"TG sent: {r.status_code}")
+        return await func()
     except Exception as e:
-        print(f"TG err: {e}")
+        if "429" in str(e):
+            print("⚠️ Helius 429, sleep 5s")
+            await asyncio.sleep(5)
+        return None
 
-def get_mint_from_tx(tx):
-    try:
-        bals = tx.get("meta", {}).get("postTokenBalances", [])
-        for b in bals:
-            mint = b.get("mint")
-            if mint and mint!= "So11111111111111111111111111111111111111112":
-                return mint
-    except:
-        pass
-    return None
+# Di bagian New mint tracked, ganti jadi gini:
+def on_new_mint(mint):
+    if len(tracked_tokens) >= MAX_TRACK:
+        # lagi penuh, skip token baru
+        print(f"Skip {mint[:6]}... queue penuh ({len(tracked_tokens)}/{MAX_TRACK})")
+        return
+    if mint not in tracked_tokens:
+        tracked_tokens[mint] = time.time()
+        print(f"New mint tracked: {mint} | Tracking: {len(tracked_tokens)}/{MAX_TRACK}")
 
-async def main():
-    send_tg("🤖 *PUMP ALERT ON*\nMonitor: PumpFun + PumpSwap | Logic: Menit 2 Organic")
-    print("Bot started...")
-    while True:
-        try:
-            now = time.time()
-            for prog in [PUMPFUN, PUMPSWAP]:
-                # --- FIX UTAMA DI SINI ---
-                resp = requests.post(RPC, json={"jsonrpc":"2.0","id":1,"method":"getSignaturesForAddress","params":[prog, {"limit": 20}]}, timeout=15)
-                if resp.status_code!= 200:
-                    print(f"RPC error {resp.status_code}: {resp.text[:200]}")
-                    continue
+# Di bagian cek volume menit ke-2, bungkus dengan safe_helius_call
+# Contoh:
+# sol_data = await safe_helius_call(lambda: get_buys(mint))
 
-                data = resp.json()
-                sigs = data.get("result", [])
-                if not sigs:
-                    continue
-
-                for sig in sigs:
-                    s = sig["signature"]
-                    if s in seen: continue
-                    seen.add(s)
-
-                    tx_resp = requests.post(RPC, json={"jsonrpc":"2.0","id":1,"method":"getTransaction","params":[s, {"maxSupportedTransactionVersion":0}]}, timeout=15)
-                    if tx_resp.status_code!= 200: continue
-                    tx = tx_resp.json().get("result")
-                    if not tx: continue
-
-                    mint = get_mint_from_tx(tx)
-                    if not mint: continue
-
-                    if mint not in tracked:
-                        tracked[mint] = {"created": now, "buys": [], "source": prog}
-                        print(f"New mint tracked: {mint[:10]}...")
-
-                    age = now - tracked[mint]["created"]
-                    if 90 <= age <= 210:
-                        try:
-                            pre = tx.get("meta", {}).get("preBalances", [])
-                            post = tx.get("meta", {}).get("postBalances", [])
-                            if not pre or not post: continue
-                            sol = (pre[0] - post[0]) / 1e9
-                            if sol <= 0: continue
-
-                            if 0.2 <= sol <= 5:
-                                tracked[mint]["buys"].append(sol)
-
-                            total = sum(tracked[mint]["buys"])
-                            count = len(tracked[mint]["buys"])
-                            avg = total / count if count else 0
-
-                            if count >= 12 and 15 <= total <= 40 and avg <= 2.5:
-                                src = "PumpFun" if tracked[mint]["source"] == PUMPFUN else "PumpSwap"
-                                send_tg(f"""🔥 *PUMP TRENCHES - {src}*
-
-💰 Vol mnt 2: {total:.1f} SOL
-👥 Wallets: {count} | Avg: {avg:.2f} SOL
-⏱️ {int(age)}s
-
-🔗 https://gmgn.ai/sol/{mint}
-🔗 https://pump.fun/{mint}
-""")
-                                tracked[mint]["buys"] = []
-                        except:
-                            continue
-
-            for k in list(tracked.keys()):
-                if now - tracked[k]["created"] > 300:
-                    del tracked[k]
-
-        except Exception as e:
-            print(f"err {e}")
-        await asyncio.sleep(2)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# Di bagian token selesai (udah lewat 210 detik), hapus biar slot kosong
+def cleanup_tokens():
+    now = time.time()
+    for mint, start in list(tracked_tokens.items()):
+        if now - start > 210: # udah lewat menit ke-2
+            del tracked_tokens[mint]
+            print(f"Done tracking {mint[:6]} | Slot free: {len(tracked_tokens)}/{MAX_TRACK}")
