@@ -1,8 +1,8 @@
 import asyncio, websockets, json, time, os, aiohttp
 
 HELIUS_KEY = os.getenv("HELIUS_API_KEY")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("BOT_TOKEN")
+CHAT_ID = "8273246175" # HARDCODE ID LU - ANTI ERROR RAILWAY
 PUMP_WS = "wss://pumpportal.fun/api/data"
 
 # === SETTING FILTER LU DISINI ===
@@ -19,6 +19,7 @@ async def send_tg(text):
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         async with aiohttp.ClientSession() as s:
             await s.post(url, json={"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown", "disable_web_page_preview": True})
+        print(f"TG sent: {text[:20]}")
     except Exception as e:
         print(f"TG err {e}")
 
@@ -42,44 +43,28 @@ async def safe_get(url):
 
 async def check_mint(mint):
     start = tracked[mint]
-    await asyncio.sleep(100) # tunggu sampe detik 100
+    await asyncio.sleep(100)
 
-    for _ in range(7): # cek dari detik 100 - 170 (menit ke-2)
+    for _ in range(7):
         elapsed = time.time() - start
         if elapsed > 175:
             break
-
-        # Ambil data dari pump.fun
         data = await safe_get(f"https://frontend-api.pump.fun/coins/{mint}")
         if not data:
             await asyncio.sleep(10)
             continue
-
         try:
-            # data pump kadang beda field, kita coba ambil
-            # Estimasi SOL di menit ke-2 kita pakai total market cap / logic sederhana
-            # Untuk akurat, pakai trade history, tapi ini versi stabil anti 429
-
-            # Simulasi ambil buys - ganti sesuai logic asli lu kalo punya
-            # Di sini kita pakai virtual sol reserves untuk estimasi
             holders = data.get("holder_count", 0) or data.get("num_holders", 0) or 0
-
-            # Hitung SOL: pakai usd market cap / harga sol ~160
             mcap = data.get("usd_market_cap", 0)
             sol_vol = mcap / 160 if mcap else 0
-
             print(f"Check {mint[:6]} | {int(elapsed)}s | ~{sol_vol:.1f} SOL | {holders} holders")
-
-            # === FILTER UTAMA ===
             if sol_vol >= MIN_SOL and holders >= MIN_HOLDERS:
                 msg = f"🚀 *PUMP ALERT*\n\nMint: `{mint}`\nSOL: ~{sol_vol:.1f} (min {MIN_SOL})\nHolders: {holders} (min {MIN_HOLDERS})\nUmur: {int(elapsed)}s\n\nhttps://pump.fun/{mint}\nhttps://photon.so/{mint}"
                 await send_tg(msg)
                 print(f"🔥 ALERT SENT {mint[:6]}")
                 break
-
         except Exception as e:
             print(f"Check err {e}")
-
         await asyncio.sleep(10)
 
     if mint in tracked:
