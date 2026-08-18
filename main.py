@@ -8,7 +8,7 @@ PUMP_WS = "wss://pumpportal.fun/api/data"
 # === SETTING FILTER LU DISINI ===
 MIN_SOL = 8
 MIN_HOLDERS = 20
-MAX_TRACK = 2
+MAX_TRACK = 4
 RPC_DELAY = 0.8
 
 tracked = {}
