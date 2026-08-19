@@ -7,7 +7,7 @@ MIN_SOL = 1
 MAX_TOP10_PERCENT = 35
 MAX_TOP1_PERCENT = 15
 MIN_HOLDERS = 15
-MAX_COIN_AGE_MONTH = 2
+MAX_COIN_AGE_HOURS = 7
 tracked = {}
 trades = {}
 async def send_tg(text):
