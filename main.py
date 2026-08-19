@@ -5,12 +5,12 @@ HELIUS_KEY = os.getenv("HELIUS_API_KEY")
 CHAT_ID = "8273246175"
 PUMP_WS = "wss://pumpportal.fun/api/data"
 
-# === FINAL SETTING LU ===
+# === FINAL SETTING - 1.5 SOL / 28% / 2-16 MENIT / SKIP 6 JAM ===
 MIN_SOL = 1.5
 MAX_TOP10_PERCENT = 28
-MAX_TOP1_PERCENT = 15 # Anti bundle: 1 wallet max 12%
+MAX_TOP1_PERCENT = 12
 MIN_HOLDERS = 15
-MAX_COIN_AGE_HOURS = 6 # Skip coin lebih dari 6 jam
+MAX_COIN_AGE_HOURS = 6
 
 tracked = {}
 trades = {}
@@ -39,30 +39,25 @@ async def get_holders_analysis(mint):
     except: return None
 
 async def main():
-    await send_tg(f"✅ *BOT ON - BUBBLEMAPS 28% + 6H FILTER*\nMin: {MIN_SOL} SOL\nTop10 Max: {MAX_TOP10_PERCENT}%\nTop1 Max: {MAX_TOP1_PERCENT}%\nSkip: >{MAX_COIN_AGE_HOURS} Jam")
+    await send_tg(f"✅ *BOT ON - FINAL 2-16 MENIT*\nMin: {MIN_SOL} SOL\nTop10: {MAX_TOP10_PERCENT}% | Top1: {MAX_TOP1_PERCENT}%\nWindow: 2-16 Menit\nSkip: >{MAX_COIN_AGE_HOURS} Jam")
 
     while True:
         try:
             async with websockets.connect(PUMP_WS) as ws:
                 await ws.send(json.dumps({"method": "subscribeNewToken"}))
-                print("WS Connected 28% Mode")
+                print("WS Connected FINAL Mode 2-16 Menit")
 
                 while True:
                     data = json.loads(await ws.recv())
 
                     if data.get('txType') == 'create' or ('mint' in data and 'symbol' in data):
                         mint = data.get('mint')
-                        # FILTER 6 JAM - cek created_at dari pumpportal kalau ada
-                        # PumpPortal kasih timestamp, kalau gak ada kita anggap baru
                         created_at = data.get('createdAt') or data.get('timestamp') or time.time()*1000
                         try:
-                            # kalau timestamp dalam ms
                             coin_age_hours = (time.time() - (created_at/1000)) / 3600 if created_at > 1000000000000 else 0
                             if coin_age_hours > MAX_COIN_AGE_HOURS:
-                                print(f"SKIP {mint[:6]} umur {coin_age_hours:.1f} jam > 6 jam")
                                 continue
                         except: pass
-
                         if not mint or mint in tracked: continue
                         tracked[mint] = time.time()
                         trades[mint] = 0.0
@@ -82,22 +77,20 @@ async def main():
                         age = time.time() - tracked[mint]
                         total_sol = trades[mint]
 
-                        # Cek menit 1 - menit 3
-                        if 45 < age < 180 and total_sol >= MIN_SOL:
-                            print(f"Check bubblemaps {mint[:6]} SOL {total_sol:.2f}")
+                        # FINAL: 120 detik - 960 detik (2 menit - 16 menit)
+                        if 120 < age < 960 and total_sol >= MIN_SOL:
+                            print(f"Check {mint[:6]} SOL {total_sol:.2f} age {int(age)}s")
                             h = await get_holders_analysis(mint)
                             if not h: continue
 
-                            # FILTER UTAMA: Top10 28% + Top1 12% + Skip bundle
                             if h['top10'] <= MAX_TOP10_PERCENT and h['top1'] <= MAX_TOP1_PERCENT and h['count'] >= MIN_HOLDERS:
                                 await send_tg(
-                                    f"🚀 *BUBBLEMAPS PASS 28% - BUY 0.03*\n\n"
+                                    f"🚀 *BUBBLEMAPS PASS 28% - BUY*\n\n"
                                     f"Mint: `{mint}`\n"
-                                    f"SOL: {total_sol:.2f} | Umur: {int(age)}s\n"
-                                    f"Top10: {h['top10']:.1f}% ✅ (<28%)\n"
-                                    f"Top1: {h['top1']:.1f}% ✅ (<12%)\n"
-                                    f"Holders: {h['count']}\n"
-                                    f"Coin: <{MAX_COIN_AGE_HOURS} Jam ✅\n\n"
+                                    f"SOL: {total_sol:.2f} | Umur: {int(age)}s ({int(age/60)}m)\n"
+                                    f"Top10: {h['top10']:.1f}% ✅\n"
+                                    f"Top1: {h['top1']:.1f}% ✅\n"
+                                    f"Holders: {h['count']}\n\n"
                                     f"https://pump.fun/{mint}\n"
                                     f"https://bubblemaps.io/sol/{mint}"
                                 )
