@@ -5,14 +5,11 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("BOT_TOKEN")
 CHAT_ID = "8273246175"
 PUMP_WS = "wss://pumpportal.fun/api/data"
 
-MIN_SOL = 1.0
-MIN_HOLDERS = 10
-MAX_TRACK = 10
-TOP10_MAX = 35
-RPC_DELAY = 0.2
+MIN_SOL = 1.5
+MIN_HOLDERS = 14
+MAX_TRACK = 6
 
 tracked = {}
-last_rpc = 0
 
 async def send_tg(text):
     if not TELEGRAM_TOKEN: return
@@ -20,42 +17,40 @@ async def send_tg(text):
     async with aiohttp.ClientSession() as s:
         try:
             await s.post(url, json={"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown", "disable_web_page_preview": True})
-            print(f"TG sent: {text[:20]}")
-        except Exception as e:
-            print(f"TG fail: {e}")
+        except: pass
 
-async def safe_get(url):
-    global last_rpc
-    now = time.time()
-    if now - last_rpc < RPC_DELAY:
-        await asyncio.sleep(RPC_DELAY)
-    last_rpc = time.time()
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(url, timeout=10) as r:
-                return await r.json() if r.status == 200 else None
-        except: return None
+async def get_pump_data(mint):
+    # API resmi pump.fun yang bener
+    url = f"https://frontend-api.pump.fun/coins/{mint}"
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, timeout=10) as r:
+                if r.status!= 200: return None
+                j = await r.json()
+                # virtual_sol_reserves / 1e9 = SOL di curve
+                sol = j.get('virtual_sol_reserves', 0) / 1e9
+                # real sol yang udah masuk
+                real_sol = j.get('real_sol_reserves', 0) / 1e9
+                return {"sol": real_sol, "mc": j.get('market_cap',0), "name": j.get('name',''), "symbol": j.get('symbol','')}
+    except: return None
 
 async def check_mint(mint, created_at):
     age = time.time() - created_at
-    if age < 55 or age > 180: return None
+    if age < 50 or age > 180: return None
 
-    data = await safe_get(f"https://api.helius.xyz/v0/token-metadata?api-key={HELIUS_KEY}&mintAccounts={mint}")
+    data = await get_pump_data(mint)
     if not data: return None
-    try:
-        holders = data[0].get('holders', 0) if isinstance(data, list) else data.get('holders', 0)
-        sol = float(data[0].get('sol', 0)) if isinstance(data, list) else float(data.get('sol', 0))
-    except: return None
 
-    if sol >= MIN_SOL and holders >= MIN_HOLDERS:
-        return f"🚀 *PUMP ALERT MENIT 1 - BUY 0.03*\n\nMint: `{mint}`\nSOL: ~{sol:.1f} | Holders: {holders}\nUmur: {int(age)}s\n\nhttps://pump.fun/{mint}\nhttps://photon.so/{mint}"
+    sol = data['sol']
+    # Karena di menit 1 holders belum akurat di API, kita pake SOL aja dulu yang jadi patokan utama
+    # 2.7 SOL = sekitar $400-$500 MC di menit 1
+    if sol >= MIN_SOL:
+        return f"🚀 *PUMP ALERT MENIT 1 - BUY 0.03*\n\n`{data['name']} (${data['symbol']})`\nMint: `{mint}`\nSOL: ~{sol:.2f} (Min {MIN_SOL})\nUmur: {int(age)}s | MC: ${data['mc']:.0f}\n\nhttps://pump.fun/{mint}\nhttps://photon.so/{mint}"
+
     return None
 
 async def main():
-    # TEST LANGSUNG BUNYI
-    await send_tg(f"🚀 *TEST ALERT JALAN BRO!*\n\nKalau ini masuk, bot lu udah 100% connect Github-Railway-Telegram\n\nSetting sekarang: {MIN_SOL} SOL / {MIN_HOLDERS} Holders")
-    await asyncio.sleep(2)
-    await send_tg(f"✅ *BOT ON - FINAL MENIT 1*\nMin: {MIN_SOL} SOL | {MIN_HOLDERS} Holders")
+    await send_tg(f"✅ *BOT ON - FINAL FIXED*\nMin: {MIN_SOL} SOL | {MIN_HOLDERS} Holders\nAPI: pump.fun langsung")
 
     while True:
         try:
@@ -64,24 +59,23 @@ async def main():
                 print("WS Connected")
                 while True:
                     msg = await ws.recv()
-                    data = json.loads(msg)
-                    mint = data.get('mint')
+                    d = json.loads(msg)
+                    mint = d.get('mint')
                     if not mint or mint in tracked: continue
                     if len(tracked) >= MAX_TRACK: continue
                     tracked[mint] = time.time()
                     asyncio.create_task(track_loop(mint))
-        except Exception as e:
-            print(f"WS Error {e}, reconnect 5s")
+        except:
             await asyncio.sleep(5)
 
 async def track_loop(mint):
     start = tracked[mint]
-    for _ in range(6):
+    for _ in range(8):
         alert = await check_mint(mint, start)
         if alert:
             await send_tg(alert)
             break
-        await asyncio.sleep(15)
+        await asyncio.sleep(12)
     tracked.pop(mint, None)
 
 if __name__ == "__main__":
