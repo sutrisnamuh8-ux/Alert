@@ -1,56 +1,52 @@
-import asyncio, websockets, json, time, os, aiohttp
+import asyncio
+import websockets
+import json
+import aiohttp
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("BOT_TOKEN")
-CHAT_ID = "8273246175"
-PUMP_WS = "wss://pumpportal.fun/api/data"
-MIN_SOL = 0.2
+# --- CONFIG ---
+TELEGRAM_BOT_TOKEN = "ISI_TOKEN_BOT_LU"
+TELEGRAM_CHAT_ID = "ISI_CHAT_ID_LU"
+PUMP_PORTAL_WSS = "wss://pumpportal.fun/api/data"
 
-tracked = {}
-trades = {}
+# Filter biar gak spam
+MIN_SOL_BUY = 0.1  # minimal buy 0.1 SOL baru alert
 
-async def send_tg(text):
-    if not TELEGRAM_TOKEN:
-        print("NO TOKEN SET", flush=True)
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    async with aiohttp.ClientSession() as s:
+async def send_telegram(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chatId": TELEGRAM_CHAT_ID, # atau "chat_id" tergantung lib
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
+    }
+    async with aiohttp.ClientSession() as session:
         try:
-            await s.post(url, json={"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown", "disable_web_page_preview": True})
-            print(f"SENT TG: {text[:30]}", flush=True)
+            await session.post(url, json=payload, timeout=10)
+            print("-> Alert terkirim ke Tele")
         except Exception as e:
-            print(f"TG ERROR {e}", flush=True)
+            print(f"Gagal kirim tele: {e}")
 
 async def main():
-    print("BOT START - NO HELIUS BYPASS 0.2 SOL", flush=True)
-    await send_tg("BOT ON - BYPASS HELIUS 0.2 SOL MODE")
+    print("Bot PumpFun BUY Alert Jalan... tanpa Helius")
+    async with websockets.connect(PUMP_PORTAL_WSS) as ws:
+        # Subscribe ke semua new token trade
+        await ws.send(json.dumps({
+            "method": "subscribeNewTrade"
+            # kalau mau token spesifik: tambah "keys": ["mint address"]
+        }))
 
-    while True:
-        try:
-            async with websockets.connect(PUMP_WS) as ws:
-                await ws.send(json.dumps({"method": "subscribeNewToken"}))
-                print("WS CONNECTED OK - waiting coins", flush=True)
+        async for message in ws:
+            data = json.loads(message)
+            # print(data) # uncomment buat debug
+            
+            # data dari pumpportal biasanya ada txType
+            if data.get("txType") != "buy":
+                continue
+            
+            sol_amount = data.get("solAmount", 0) / 1e9 if data.get("solAmount") else data.get("sol_amount", 0)
+            if sol_amount < MIN_SOL_BUY:
+                continue
 
-                while True:
-                    data = json.loads(await ws.recv())
-
-                    # new coin
-                    if 'mint' in data and 'symbol' in data:
-                        mint = data.get('mint')
-                        if mint in tracked: continue
-                        sym = data.get('symbol','?')
-                        print(f"NEW COIN: {sym} | {mint}", flush=True)
-                        tracked[mint] = time.time()
-                        trades[mint] = 0.0
-                        try:
-                            await ws.send(json.dumps({"method": "subscribeTokenTrade", "keys": [mint]}))
-                        except: pass
-
-                    # buy trade
-                    if data.get('txType') == 'buy':
-                        mint = data.get('mint')
-                        if mint not in trades: continue
-                        sol = float(data.get('solAmount',0) or 0)
-                        if sol > 1000: sol /= 1e9
-                        trades[mint] += sol
-                        age = time.time() - tracked[mint]
-                        print(f"TRADE {mint[:8]} SOL={trades[mint]:.3f} age={int(age)}s
+            mint = data.get("mint")
+            trader = data.get("traderPublicKey
