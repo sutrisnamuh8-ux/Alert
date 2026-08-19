@@ -1,53 +1,55 @@
-import asyncio
-import websockets
-import json
-import aiohttp
 import os
+import asyncio
+import json
 import time
-from collections import defaultdict, deque
-from datetime import datetime
+from collections import defaultdict
+import websockets
+import aiohttp
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "8273246175")
-PUMP_PORTAL_WSS = "wss://pumpportal.fun/api/data"
-
-MIN_SOL_BUY = float(os.getenv("MIN_SOL_BUY", "0.02"))
+# --- CONFIG DARI RAILWAY VARIABLES ---
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+BUBBLE_THRESHOLD = float(os.getenv("BUBBLE_THRESHOLD", "30"))
 MIN_VOL_5M = float(os.getenv("MIN_VOL_5M", "5"))
 MAX_VOL_5M = float(os.getenv("MAX_VOL_5M", "25"))
-BUBBLE_THRESHOLD = float(os.getenv("BUBBLE_THRESHOLD", "30"))
-MAX_AGE_MINUTES = float(os.getenv("MAX_AGE_MINUTES", "15"))
+MIN_SOL_BUY = float(os.getenv("MIN_SOL_BUY", "0.1"))
 
-vol_tracker = defaultdict(lambda: deque())
-
-def log(msg):
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
-
-def check_volume_5m(mint, sol_amount):
-    now = time.time()
-    dq = vol_tracker[mint]
-    dq.append((now, sol_amount))
-    while dq and now - dq[0][0] > 300:
-        dq.popleft()
-    return sum(v for t, v in dq)
-
-async def check_bubblemap(mint):
-    url = f"https://api-legacy.bubblemaps.io/map-data?chain=sol&token={mint}"
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(url, timeout=10) as r:
-                if r.status!= 200:
-                    return False, 0
-                data = await r.json()
-                max_pct = 0
-                for n in data.get("nodes", []):
-                    max_pct = max(max_pct, n.get("percentage", 0))
-                for c in data.get("clusters", []):
-                    max_pct = max(max_pct, c.get("percentage", 0))
-                is_rug = max_pct >= BUBBLE_THRESHOLD
-                return is_rug, max_pct
-    except Exception as e:
-        log(f"BUBBLE ERROR {e}")
-        return False, 0
+# Simpan total buy per token dalam 5 menit
+vol_tracker = defaultdict(list)
 
 async def send_telegram(text):
-    if not TELEGRAM_BOT_TOKEN or
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    async with aiohttp.ClientSession() as session:
+        await session.post(url, json={"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"})
+
+async def check_bubblemap(mint):
+    # Simple check - nanti bisa ganti API bubblemaps asli
+    try:
+        url = f"https://api.bubblemaps.io/map-data?token={mint}&chain=solana"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=10) as r:
+                if r.status != 200:
+                    return False, 0
+                data = await r.json()
+                # cek top holder cluster
+                max_cluster = 0
+                for node in data.get("nodes", []):
+                    pct = node.get("percentage", 0)
+                    if pct > max_cluster:
+                        max_cluster = pct
+                # kalau cluster > threshold = bundle/bundled
+                if max_cluster > BUBBLE_THRESHOLD:
+                    return True, max_cluster
+                return False, max_cluster
+    except:
+        return False, 0
+
+async def main():
+    uri = "wss://pumpportal.fun/api/data"
+    print("Bot signal jalan...")
+    await send_telegram("Bot signal KETAT aktif: 5-25 SOL / 5m")
+
+    async with websockets.connect(uri) as ws:
+        payload = {"method": "subscribeNew
