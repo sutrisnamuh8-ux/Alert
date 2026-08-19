@@ -1,14 +1,22 @@
-import asyncio, websockets, json, aiohttp, os, time
+import asyncio
+import websockets
+import json
+import aiohttp
+import os
+import time
 from collections import defaultdict, deque
 from datetime import datetime
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "8273246175")
 PUMP_PORTAL_WSS = "wss://pumpportal.fun/api/data"
-MIN_SOL_BUY = float(os.getenv("MIN_SOL_BUY", "0.1"))
-MIN_VOL_5M = float(os.getenv("MIN_VOL_5M", "0.5"))
-MAX_VOL_5M = float(os.getenv("MAX_VOL_5M", "15"))
-BUBBLE_THRESHOLD = float(os.getenv("BUBBLE_THRESHOLD", 2"))
+
+MIN_SOL_BUY = float(os.getenv("MIN_SOL_BUY", "0.02"))
+MIN_VOL_5M = float(os.getenv("MIN_VOL_5M", "5"))
+MAX_VOL_5M = float(os.getenv("MAX_VOL_5M", "25"))
+BUBBLE_THRESHOLD = float(os.getenv("BUBBLE_THRESHOLD", "30"))
+MAX_AGE_MINUTES = float(os.getenv("MAX_AGE_MINUTES", "15"))
+
 vol_tracker = defaultdict(lambda: deque())
 
 def log(msg):
@@ -26,7 +34,7 @@ async def check_bubblemap(mint):
     url = f"https://api-legacy.bubblemaps.io/map-data?chain=sol&token={mint}"
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.get(url, timeout=8) as r:
+            async with s.get(url, timeout=10) as r:
                 if r.status!= 200:
                     return False, 0
                 data = await r.json()
@@ -35,25 +43,11 @@ async def check_bubblemap(mint):
                     max_pct = max(max_pct, n.get("percentage", 0))
                 for c in data.get("clusters", []):
                     max_pct = max(max_pct, c.get("percentage", 0))
-                return max_pct >= BUBBLE_THRESHOLD, max_pct
-    except:
+                is_rug = max_pct >= BUBBLE_THRESHOLD
+                return is_rug, max_pct
+    except Exception as e:
+        log(f"BUBBLE ERROR {e}")
         return False, 0
 
 async def send_telegram(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.post(url, json=payload, timeout=10) as r:
-                res = await r.text()
-                log(f"TG SEND {r.status}: {res[:200]}")
-    except Exception as e:
-        log(f"TG ERROR {e}")
-
-async def main():
-    log(f"BOT START | BUY>{MIN_SOL_BUY} | VOL {MIN_VOL_5M}-{MAX_VOL_5M} | BUBBLE {BUBBLE_THRESHOLD}% | CHAT {TELEGRAM_CHAT_ID}")
-    await send_telegram(f"✅ BOT ON - KETAT NO RUGCHECK\nVOL {MIN_VOL_5M}-{MAX_VOL_5M} SOL | BUBBLE {BUBBLE_THRESHOLD}%")
-    while True:
-        try:
-            async with websockets.connect(PUMP_PORTAL_WSS) as ws:
-                await ws.send(json.dumps({"method": "
+    if not TELEGRAM_BOT_TOKEN or
