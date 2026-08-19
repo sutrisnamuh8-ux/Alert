@@ -3,12 +3,12 @@ from collections import defaultdict, deque
 from datetime import datetime
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = "8273246175"
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "8273246175")
 PUMP_PORTAL_WSS = "wss://pumpportal.fun/api/data"
 MIN_SOL_BUY = float(os.getenv("MIN_SOL_BUY", "0.02"))
 MIN_VOL_5M = float(os.getenv("MIN_VOL_5M", "5"))
 MAX_VOL_5M = float(os.getenv("MAX_VOL_5M", "25"))
-BUBBLE_THRESHOLD = 30
+BUBBLE_THRESHOLD = float(os.getenv("BUBBLE_THRESHOLD", "30"))
 vol_tracker = defaultdict(lambda: deque())
 
 def log(msg):
@@ -63,7 +63,7 @@ async def send_telegram(text):
         await s.post(url, json=payload, timeout=10)
 
 async def main():
-    log(f"BOT START | BUY>{MIN_SOL_BUY} | VOL {MIN_VOL_5M}-{MAX_VOL_5M} | BUBBLE {BUBBLE_THRESHOLD}%")
+    log(f"BOT START | BUY>{MIN_SOL_BUY} | VOL {MIN_VOL_5M}-{MAX_VOL_5M} | BUBBLE {BUBBLE_THRESHOLD}% | CHAT {TELEGRAM_CHAT_ID}")
     while True:
         try:
             async with websockets.connect(PUMP_PORTAL_WSS) as ws:
