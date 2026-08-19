@@ -6,10 +6,10 @@ CHAT_ID = "8273246175"
 PUMP_WS = "wss://pumpportal.fun/api/data"
 
 # === SETTING FINAL MENIT 1 ===
-MIN_SOL = 2.5
-MIN_HOLDERS = 22
-MAX_TRACK = 6
-RPC_DELAY = 0.3
+MIN_SOL = 1.4
+MIN_HOLDERS = 10
+MAX_TRACK = 10
+RPC_DELAY = 0.2
 TOP10_MAX = 35 # anti bundle
 
 tracked = {}
