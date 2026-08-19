@@ -2,14 +2,15 @@ import asyncio, websockets, json, time, os, aiohttp
 
 HELIUS_KEY = os.getenv("HELIUS_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("BOT_TOKEN")
-CHAT_ID = "8273246175" # HARDCODE ID LU - ANTI ERROR RAILWAY
+CHAT_ID = "8273246175"
 PUMP_WS = "wss://pumpportal.fun/api/data"
 
-# === SETTING FILTER LU DISINI ===
-MIN_SOL = 8
-MIN_HOLDERS = 20
-MAX_TRACK = 4
-RPC_DELAY = 0.8
+# === SETTING FINAL MENIT 1 ===
+MIN_SOL = 2.5
+MIN_HOLDERS = 22
+MAX_TRACK = 6
+RPC_DELAY = 0.3
+TOP10_MAX = 35 # anti bundle
 
 tracked = {}
 last_rpc = 0
@@ -43,36 +44,53 @@ async def safe_get(url):
 
 async def check_mint(mint):
     start = tracked[mint]
-    await asyncio.sleep(100)
+    await asyncio.sleep(55) # cek pas menit 1
 
-    for _ in range(7):
+    for _ in range(8):
         elapsed = time.time() - start
-        if elapsed > 175:
+        if elapsed > 180:
             break
         data = await safe_get(f"https://frontend-api.pump.fun/coins/{mint}")
         if not data:
-            await asyncio.sleep(10)
+            await asyncio.sleep(8)
             continue
         try:
             holders = data.get("holder_count", 0) or data.get("num_holders", 0) or 0
             mcap = data.get("usd_market_cap", 0)
             sol_vol = mcap / 160 if mcap else 0
-            print(f"Check {mint[:6]} | {int(elapsed)}s | ~{sol_vol:.1f} SOL | {holders} holders")
+
+            # filter anti bundle
+            top_10_pct = data.get("top_10_holders_pct", 0) or data.get("top10_pct", 0) or 0
+            if top_10_pct > TOP10_MAX and top_10_pct!= 0:
+                print(f"Skip {mint[:6]} | Top10 {top_10_pct}% > {TOP10_MAX}% (bundle)")
+                break
+
+            print(f"Check {mint[:6]} | {int(elapsed)}s | ~{sol_vol:.1f} SOL | {holders} holders | Top10 {top_10_pct}%")
+
             if sol_vol >= MIN_SOL and holders >= MIN_HOLDERS:
-                msg = f"🚀 *PUMP ALERT*\n\nMint: `{mint}`\nSOL: ~{sol_vol:.1f} (min {MIN_SOL})\nHolders: {holders} (min {MIN_HOLDERS})\nUmur: {int(elapsed)}s\n\nhttps://pump.fun/{mint}\nhttps://photon.so/{mint}"
+                msg = (
+                    f"🚀 *PUMP ALERT MENIT 1 - BUY 0.03*\n\n"
+                    f"Mint: `{mint}`\n"
+                    f"SOL: ~{sol_vol:.1f} (min {MIN_SOL})\n"
+                    f"Holders: {holders} (min {MIN_HOLDERS})\n"
+                    f"Top10: {top_10_pct}%\n"
+                    f"Umur: {int(elapsed)}s\n\n"
+                    f"https://pump.fun/{mint}\n"
+                    f"https://photon.so/{mint}"
+                )
                 await send_tg(msg)
                 print(f"🔥 ALERT SENT {mint[:6]}")
                 break
         except Exception as e:
             print(f"Check err {e}")
-        await asyncio.sleep(10)
+        await asyncio.sleep(8)
 
     if mint in tracked:
         del tracked[mint]
         print(f"Done {mint[:6]} | Slot {len(tracked)}/{MAX_TRACK}")
 
 async def main():
-    await send_tg(f"✅ *BOT ON - SETTING BARU*\nMin: {MIN_SOL} SOL | {MIN_HOLDERS} Holders\nMax Track: {MAX_TRACK} | Anti 429")
+    await send_tg(f"✅ *BOT ON - FINAL MENIT 1*\nMin: {MIN_SOL} SOL | {MIN_HOLDERS} Holders\nTop10 Max: {TOP10_MAX}%\nMax Track: {MAX_TRACK}")
     print(f"BOT STARTED {MIN_SOL} SOL / {MIN_HOLDERS} Holders")
     while True:
         try:
@@ -86,15 +104,14 @@ async def main():
                         if not mint or mint in tracked:
                             continue
                         if len(tracked) >= MAX_TRACK:
-                            print(f"Skip {mint[:6]} full {len(tracked)}/{MAX_TRACK}")
                             continue
                         tracked[mint] = time.time()
-                        print(f"New mint tracked: {mint} | {len(tracked)}/{MAX_TRACK}")
+                        print(f"Track {mint[:6]} | {len(tracked)}/{MAX_TRACK}")
                         asyncio.create_task(check_mint(mint))
-                    except:
-                        continue
+                    except Exception as e:
+                        print(f"Loop err {e}")
         except Exception as e:
-            print(f"WS DC {e} retry 3s")
+            print(f"WS err {e}, reconnect 3s")
             await asyncio.sleep(3)
 
 if __name__ == "__main__":
