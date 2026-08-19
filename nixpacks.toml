@@ -1,0 +1,5 @@
+[phases.setup]
+nixPkgs = ["python3", "python3-pip"]
+
+[start]
+cmd = "bash -c \"sed -i 's/^[ \\t]*//' main.py && python main.py\""
