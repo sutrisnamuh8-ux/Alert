@@ -6,9 +6,9 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "8273246175")
 PUMP_PORTAL_WSS = "wss://pumpportal.fun/api/data"
 MIN_SOL_BUY = float(os.getenv("MIN_SOL_BUY", "0.1"))
-MIN_VOL_5M = float(os.getenv("MIN_VOL_5M", "5"))
-MAX_VOL_5M = float(os.getenv("MAX_VOL_5M", "25"))
-BUBBLE_THRESHOLD = float(os.getenv("BUBBLE_THRESHOLD", "30"))
+MIN_VOL_5M = float(os.getenv("MIN_VOL_5M", "0.5"))
+MAX_VOL_5M = float(os.getenv("MAX_VOL_5M", "15"))
+BUBBLE_THRESHOLD = float(os.getenv("BUBBLE_THRESHOLD", 2"))
 vol_tracker = defaultdict(lambda: deque())
 
 def log(msg):
