@@ -8,14 +8,13 @@ PUMP_PORTAL_WSS = "wss://pumpportal.fun/api/data"
 
 MIN_SOL_BUY = float(os.getenv("MIN_SOL_BUY", "0.1"))
 MIN_VOL_5M = float(os.getenv("MIN_VOL_5M", "5"))
-MAX_VOL_5M = float(os.getenv("MAX_VOL_5M", "25"))
+MAX_VOL_5M = float(os.getenv("MAX_VOL_5M", "13"))
 BUBBLE_THRESHOLD = 30
 
 vol_tracker = defaultdict(lambda: deque())
 
 def log(msg):
-    now = datetime.now().strftime("%H:%M:%S")
-    print(f"[{now}] {msg}")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 def check_volume_5m(mint, sol_amount):
     now = time.time()
@@ -29,32 +28,27 @@ async def check_bubblemap(mint):
     url = f"https://api-legacy.bubblemaps.io/map-data?chain=sol&token={mint}"
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.get(url, timeout=10) as r:
-                if r.status!= 200:
-                    return False, 0, f"HTTP {r.status}"
+            async with s.get(url, timeout=8) as r:
+                if r.status!= 200: return False, 0
                 data = await r.json()
                 max_pct = 0
                 for n in data.get("nodes", []): max_pct = max(max_pct, n.get("percentage", 0))
                 for c in data.get("clusters", []): max_pct = max(max_pct, c.get("percentage", 0))
-                return max_pct >= BUBBLE_THRESHOLD, max_pct, "OK"
-    except Exception as e:
-        return False, 0, str(e)
+                return max_pct >= BUBBLE_THRESHOLD, max_pct
+    except: return False, 0
 
 async def check_rugcheck(mint):
     url = f"https://api.rugcheck.xyz/v1/tokens/{mint}/report"
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.get(url, timeout=10) as r:
-                if r.status!= 200: return True, f"HTTP {r.status}", True
+            async with s.get(url, timeout=8) as r:
+                if r.status!= 200: return True, "UNKNOWN"
                 data = await r.json()
                 for risk in data.get("risks", []):
-                    if risk.get("level") == "danger":
-                        return False, risk.get("name","DANGER"), False
-                if data.get("score",0) > 7000:
-                    return False, f"Score {data.get('score')}", False
-                return True, f"Score {data.get('score')}", False
-    except Exception as e:
-        return True, str(e), True
+                    if risk.get("level") == "danger": return False, risk.get("name","DANGER")
+                if data.get("score",0) > 7000: return False, f"Score {data.get('score')}"
+                return True, f"Score {data.get('score')}"
+    except: return True, "ERR"
 
 async def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -68,80 +62,59 @@ async def main():
         try:
             async with websockets.connect(PUMP_PORTAL_WSS) as ws:
                 await ws.send(json.dumps({"method": "subscribeNewTrade"}))
-                log("Connected to PumpPortal WSS")
+                log("Connected to PumpPortal WSS - waiting trades...")
                 async for msg in ws:
                     data = json.loads(msg)
                     if data.get("txType")!= "buy": continue
-
                     raw = data.get("solAmount") or 0
                     sol_amount = raw / 1e9 if raw > 1_000_000 else float(raw)
                     mint = data.get("mint")
                     if not mint: continue
 
-                    # 1. FILTER BUY
-                    if sol_amount < MIN_SOL_BUY:
-                        log(f"[SKIP BUY] {mint} | Buy {sol_amount:.3f} < {MIN_SOL_BUY}")
-                        continue
-
-                    # 2. FILTER VOLUME
+                    # LOG SEMUA BUY MASUK DULU BIAR KELIATAN
                     total_vol = check_volume_5m(mint, sol_amount)
+
+                    if sol_amount < MIN_SOL_BUY:
+                        log(f"[SKIP BUY] {mint} | buy {sol_amount:.3f} < min {MIN_SOL_BUY}")
+                        continue
                     if total_vol < MIN_VOL_5M:
-                        log(f"[SKIP SEPI] {mint} | Vol5m {total_vol:.2f} < {MIN_VOL_5M} | Buy {sol_amount:.2f}")
+                        log(f"[SKIP SEPI] {mint} | Vol5m {total_vol:.2f} < {MIN_VOL_5M}")
                         continue
                     if total_vol > MAX_VOL_5M:
                         log(f"[SKIP RAME] {mint} | Vol5m {total_vol:.2f} > {MAX_VOL_5M}")
                         continue
 
-                    log(f"[CHECK] {mint} | Buy {sol_amount:.2f} | Vol5m {total_vol:.2f} -> Cek umur...")
+                    log(f"[CHECK] {mint} | Vol {total_vol:.2f} OK -> cek umur & security...")
 
-                    # 3. FILTER UMUR
-                    age_min = 0
+                    # UMUR
                     try:
                         async with aiohttp.ClientSession() as s:
-                            async with s.get(f"https://frontend-api.pump.fun/coins/{mint}", timeout=10) as r:
+                            async with s.get(f"https://frontend-api.pump.fun/coins/{mint}", timeout=8) as r:
                                 if r.status == 200:
                                     coin = await r.json()
                                     ts = coin.get("created_timestamp")
                                     if ts:
                                         age_min = (time.time()*1000 - ts) / 60000
                                         if not (2 <= age_min <= 960):
-                                            log(f"[SKIP UMUR] {mint} | Umur {age_min:.1f}m diluar 2-960m")
+                                            log(f"[SKIP UMUR] {mint} | {age_min:.1f}m")
                                             continue
-                    except Exception as e:
-                        log(f"[ERR UMUR] {mint} {e}")
+                    except: pass
 
-                    # 4. FILTER RUGCHECK
-                    log(f"[RUGCHECK] {mint} | Umur {age_min:.1f}m OK -> hit rugcheck...")
-                    is_safe, rug_info, is_err = await check_rugcheck(mint)
+                    is_safe, rug_info = await check_rugcheck(mint)
                     if not is_safe:
-                        log(f"[SKIP RUG] {mint} | DANGER: {rug_info}")
+                        log(f"[SKIP RUG] {mint} | {rug_info}")
                         continue
-                    if is_err:
-                        log(f"[RUG ERR] {mint} | {rug_info} -> anggap SAFE")
 
-                    # 5. FILTER BUBBLEMAP
-                    log(f"[BUBBLE] {mint} | Rug {rug_info} SAFE -> hit bubblemap...")
-                    is_bundle, pct, b_info = await check_bubblemap(mint)
+                    is_bundle, pct = await check_bubblemap(mint)
                     if not is_bundle:
-                        log(f"[SKIP BUBBLE] {mint} | Bubble {pct:.1f}% < {BUBBLE_THRESHOLD}% | {b_info}")
+                        log(f"[SKIP BUBBLE] {mint} | {pct:.1f}%")
                         continue
 
-                    # LOLOS SEMUA
-                    log(f"✅ [ALERT] {mint} | Vol {total_vol:.1f} | Bubble {pct:.1f}% | Rug {rug_info}")
-                    text = (
-                        f"🔥 <b>GOLDEN ZONE + BUNDLE</b>\n"
-                        f"🪙 <code>{mint}</code>\n"
-                        f"💰 Buy: {sol_amount:.2f} | Vol5m: {total_vol:.2f} SOL\n"
-                        f"⏰ Umur: {age_min:.1f}m | 📊 Bubble: {pct:.1f}%\n"
-                        f"🛡️ Rug: {rug_info}\n"
-                        f"<a href='https://bubblemaps.io/sol/token/{mint}'>Bubble</a> | "
-                        f"<a href='https://rugcheck.xyz/tokens/{mint}'>Rug</a> | "
-                        f"<a href='https://pump.fun/{mint}'>PUMP</a>"
-                    )
+                    log(f"✅ ALERT {mint} | Vol {total_vol:.2f} | Bubble {pct:.1f}%")
+                    text = f"🔥 <b>{MIN_VOL_5M}-{MAX_VOL_5M} SOL + BUNDLE</b>\n🪙 <code>{mint}</code>\n💰 Buy {sol_amount:.2f} | Vol5m {total_vol:.2f}\n📊 Bubble {pct:.1f}% | {rug_info}\n<a href='https://pump.fun/{mint}'>PUMP</a>"
                     await send_telegram(text)
-
         except Exception as e:
-            log(f"WS ERROR {e} -> reconnect 5s")
+            log(f"ERROR {e} reconnect 5s")
             await asyncio.sleep(5)
 
 if __name__ == "__main__":
