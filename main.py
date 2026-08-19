@@ -52,4 +52,5 @@ async def main():
     await send_telegram("Bot signal KETAT aktif: 5-25 SOL / 5m")
 
     async with websockets.connect(uri) as ws:
-        payload = {"method": "subscribeNew"}
+        payload = {"method": "subscribeNewTrade"}
+        await ws.send(json.dumps(payload))
