@@ -59,9 +59,13 @@ async def check_rugcheck(mint):
 async def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
-    async with aiohttp.ClientSession() as s:
-        await s.post(url, json=payload, timeout=10)
-
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(url, json=payload, timeout=10) as r:
+                res = await r.text()
+                log(f"TG SEND {r.status}: {res[:200]}")
+    except Exception as e:
+        log(f"TG ERROR {e}")
 async def main():
     log(f"BOT START | BUY>{MIN_SOL_BUY} | VOL {MIN_VOL_5M}-{MAX_VOL_5M} | BUBBLE {BUBBLE_THRESHOLD}% | CHAT {TELEGRAM_CHAT_ID}")
     while True:
