@@ -6,9 +6,9 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = "8273246175"
 PUMP_PORTAL_WSS = "wss://pumpportal.fun/api/data"
 
-MIN_SOL_BUY = float(os.getenv("MIN_SOL_BUY", "0.1"))
+MIN_SOL_BUY = float(os.getenv("MIN_SOL_BUY", "0.02"))
 MIN_VOL_5M = float(os.getenv("MIN_VOL_5M", "5"))
-MAX_VOL_5M = float(os.getenv("MAX_VOL_5M", "13"))
+MAX_VOL_5M = float(os.getenv("MAX_VOL_5M", "25"))
 BUBBLE_THRESHOLD = 30
 
 vol_tracker = defaultdict(lambda: deque())
@@ -60,62 +60,4 @@ async def main():
     log(f"BOT START | BUY>{MIN_SOL_BUY} | VOL {MIN_VOL_5M}-{MAX_VOL_5M} | BUBBLE {BUBBLE_THRESHOLD}%")
     while True:
         try:
-            async with websockets.connect(PUMP_PORTAL_WSS) as ws:
-                await ws.send(json.dumps({"method": "subscribeNewTrade"}))
-                log("Connected to PumpPortal WSS - waiting trades...")
-                async for msg in ws:
-                    data = json.loads(msg)
-                    if data.get("txType")!= "buy": continue
-                    raw = data.get("solAmount") or 0
-                    sol_amount = raw / 1e9 if raw > 1_000_000 else float(raw)
-                    mint = data.get("mint")
-                    if not mint: continue
-
-                    # LOG SEMUA BUY MASUK DULU BIAR KELIATAN
-                    total_vol = check_volume_5m(mint, sol_amount)
-
-                    if sol_amount < MIN_SOL_BUY:
-                        log(f"[SKIP BUY] {mint} | buy {sol_amount:.3f} < min {MIN_SOL_BUY}")
-                        continue
-                    if total_vol < MIN_VOL_5M:
-                        log(f"[SKIP SEPI] {mint} | Vol5m {total_vol:.2f} < {MIN_VOL_5M}")
-                        continue
-                    if total_vol > MAX_VOL_5M:
-                        log(f"[SKIP RAME] {mint} | Vol5m {total_vol:.2f} > {MAX_VOL_5M}")
-                        continue
-
-                    log(f"[CHECK] {mint} | Vol {total_vol:.2f} OK -> cek umur & security...")
-
-                    # UMUR
-                    try:
-                        async with aiohttp.ClientSession() as s:
-                            async with s.get(f"https://frontend-api.pump.fun/coins/{mint}", timeout=8) as r:
-                                if r.status == 200:
-                                    coin = await r.json()
-                                    ts = coin.get("created_timestamp")
-                                    if ts:
-                                        age_min = (time.time()*1000 - ts) / 60000
-                                        if not (2 <= age_min <= 960):
-                                            log(f"[SKIP UMUR] {mint} | {age_min:.1f}m")
-                                            continue
-                    except: pass
-
-                    is_safe, rug_info = await check_rugcheck(mint)
-                    if not is_safe:
-                        log(f"[SKIP RUG] {mint} | {rug_info}")
-                        continue
-
-                    is_bundle, pct = await check_bubblemap(mint)
-                    if not is_bundle:
-                        log(f"[SKIP BUBBLE] {mint} | {pct:.1f}%")
-                        continue
-
-                    log(f"✅ ALERT {mint} | Vol {total_vol:.2f} | Bubble {pct:.1f}%")
-                    text = f"🔥 <b>{MIN_VOL_5M}-{MAX_VOL_5M} SOL + BUNDLE</b>\n🪙 <code>{mint}</code>\n💰 Buy {sol_amount:.2f} | Vol5m {total_vol:.2f}\n📊 Bubble {pct:.1f}% | {rug_info}\n<a href='https://pump.fun/{mint}'>PUMP</a>"
-                    await send_telegram(text)
-        except Exception as e:
-            log(f"ERROR {e} reconnect 5s")
-            await asyncio.sleep(5)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+            async with websockets.connect(PUMP_PORT
